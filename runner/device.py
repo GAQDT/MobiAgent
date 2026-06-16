@@ -398,6 +398,8 @@ class HdcHarmonyDevice(Device):
         self.default_height = default_height
         self.screen_width = None
         self.screen_height = None
+        self.lastX = 0
+        self.lastY = 0
         self.app_package_names = {
             "设置": "com.ohos.settings",
             "图库": "com.ohos.photos",
@@ -569,6 +571,8 @@ class HdcHarmonyDevice(Device):
     def click(self, x, y):
         self._shell("uinput", "-T", "-c", int(x), int(y))
         time.sleep(0.5)
+        self.lastX = x
+        self.lastY = y
 
     def long_click(self, x, y):
         self._run_first(
@@ -587,7 +591,7 @@ class HdcHarmonyDevice(Device):
     def input(self, text):
         self._run_first(
             [
-                ["uitest", "uiInput", "text", text],
+                ["uitest", "uiInput", "inputText", self.lastX, self.lastY, text],
                 ["input", "text", text],
             ]
         )

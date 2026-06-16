@@ -551,6 +551,8 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
         img: Image.Image
     ) -> List[Dict]:
         """构建动作序列"""
+
+        action = (action or "").lower()
         
         if action == "done":
             status = parameters.get("status", "success")
@@ -599,6 +601,31 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
             # 框架已经有等待逻辑，这里返回空操作
             logger.info(f"Waiting {duration}s...")
             return []
+
+        elif action == "system":
+            system_action = str(parameters.get("action", "")).lower()
+
+            if system_action in ["go_back", "back", "press_back"]:
+                return [{
+                    "type": "back",
+                    "params": {}
+                }]
+
+            if system_action in ["go_home", "home", "press_home"]:
+                return [{
+                    "type": "home",
+                    "params": {}
+                }]
+
+            if system_action in ["wait", "pause"]:
+                duration = parameters.get("duration", parameters.get("seconds", 1))
+                return [{
+                    "type": "wait",
+                    "params": {"seconds": duration}
+                }]
+
+            logger.warning(f"Unknown system action: {system_action}")
+            return [{"type": "retry", "params": {}}]
         
         else:
             logger.warning(f"Unknown action: {action}")
