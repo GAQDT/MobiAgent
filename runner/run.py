@@ -76,6 +76,8 @@ def setup_logging(log_level: str = "INFO"):
         'providers.uitars.uitars_task',
         'providers.uitars.ui_tars_helper',
         'providers.autoglm.autoglm_task',
+        'agentrr_oh_plugin',
+        'agent_rr.action_cache.tree',
     ]
     
     for logger_name in module_loggers:
@@ -203,6 +205,19 @@ def parse_args():
                       help='Grounder模型名称 (默认: MobiMind-1.5-4B)')
     mobiagent_group.add_argument('--use-experience', action='store_true', default=False,
                       help='使用经验')
+
+    # ==================== AgentRR / OpenHarmony Plugin 参数 ====================
+    agentrr_group = parser.add_argument_group('AgentRR OpenHarmony Plugin 参数')
+    agentrr_group.add_argument('--use-agentrr', action='store_true', default=False,
+                      help='启用 AgentRR OpenHarmony plugin')
+    agentrr_group.add_argument('--agentrr-memory-dir', type=str, default='runner/agentrr_memory',
+                      help='AgentRR memory 保存目录 (默认: runner/agentrr_memory)')
+    agentrr_group.add_argument('--agentrr-decider-base-url', type=str, default=None,
+                      help='AgentRR decider OpenAI-compatible base URL')
+    agentrr_group.add_argument('--agentrr-grounder-base-url', type=str, default=None,
+                      help='AgentRR grounder OpenAI-compatible base URL')
+    agentrr_group.add_argument('--agentrr-action-sleep', type=float, default=1.0,
+                      help='AgentRR 每个动作后的等待时间，单位秒 (默认: 1.0)')
     
     # ==================== UI-TARS 专属参数 ====================
     uitars_group = parser.add_argument_group('UI-TARS 专属参数')
@@ -318,6 +333,51 @@ def execute_single_task(
     if app_name and task_type:
         logging.info(f"App: {app_name}, Type: {task_type}")
     logging.info(f"=" * 60)
+
+    # ==================== AgentRR OpenHarmony Plugin 分支 ====================
+    # 启用 --use-agentrr 时，不走原始 TaskManager，而是交给 OpenHarmony AgentRR plugin。
+    # 这样 run.py 仍然只是统一入口，AgentRR 的 Environment / Agent / ActionTree 对齐逻辑
+    # 全部放在 runner/agentrr_oh_plugin.py 中。
+    if getattr(args, "use_agentrr", False):
+        try:
+            from agentrr_oh_plugin import run_agentrr_oh_task
+
+            start_time = time.time()
+            result = run_agentrr_oh_task(
+                task_description=task_description,
+                device=device,
+                device_type=device_type,
+                output_dir=task_dir,
+                args=args,
+            )
+            elapsed_time = time.time() - start_time
+
+            # plugin 内部通常已经写入 elapsed_time / output_dir，这里兜底补齐。
+            result.setdefault("elapsed_time", elapsed_time)
+            result.setdefault("task_description", task_description)
+            result.setdefault("output_dir", task_dir)
+            result.setdefault("agentrr_enabled", True)
+
+            logging.info(f"AgentRR任务完成! 状态: {result.get('status', 'unknown')}")
+            logging.info(f"耗时: {result.get('elapsed_time', elapsed_time):.2f}秒")
+            logging.info(
+                f"模型调用: {result.get('model_calls', 0)}, "
+                f"decider_calls: {result.get('decider_calls', 0)}, "
+                f"grounder_calls: {result.get('grounder_calls', 0)}, "
+                f"replayed_actions: {result.get('replayed_actions', 0)}"
+            )
+
+            return result
+
+        except Exception as e:
+            logging.error(f"AgentRR任务执行失败: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "error": str(e),
+                "task_description": task_description,
+                "output_dir": task_dir,
+                "agentrr_enabled": True,
+            }
     
     # 准备kwargs参数 - 使用统一的参数命名
     kwargs = {
