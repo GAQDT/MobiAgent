@@ -7,6 +7,21 @@ from pathlib import Path
 from device import HdcHarmonyDevice
 
 
+SWIPE_DIRECTIONS = ["up", "down", "left", "right"]
+SINGLE_ACTIONS = [
+    "smoke",
+    "wakeup",
+    "unlock",
+    "screenshot",
+    "tap",
+    "swipe",
+    "back",
+    "home",
+    "app-start",
+    "packages",
+]
+
+
 def save_screenshot(device, out_dir, name):
     path = out_dir / name
     device.screenshot(path)
@@ -14,29 +29,104 @@ def save_screenshot(device, out_dir, name):
     return path
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Smoke test for the hdc-backed OpenHarmony device.")
-    parser.add_argument("--hdc-path", default=None, help="Path to hdc/hdc.exe. Defaults to HDC_PATH, PATH, or local SDK.")
-    parser.add_argument("--target", default=None, help="Optional hdc target id if multiple devices are connected.")
-    parser.add_argument("--out-dir", default="hdc_test_results", help="Directory for screenshots.")
-    parser.add_argument("--tap-x", type=int, default=100, help="X coordinate used by the tap test.")
-    parser.add_argument("--tap-y", type=int, default=100, help="Y coordinate used by the tap test.")
-    parser.add_argument("--swipe", choices=["up", "down", "left", "right"], default="up", help="Swipe direction to test.")
-    parser.add_argument("--input-text", default=None, help="Optional text input test. Focus a text field first.")
-    parser.add_argument("--package", default=None, help="Optional bundle name to launch, e.g. com.huawei.hmos.settings.")
-    parser.add_argument("--skip-actions", action="store_true", help="Only test connection and screenshots.")
-    args = parser.parse_args()
+def save_packages(device, out_dir, name, preview_count):
+    path = out_dir / name
+    proc = device._run_first(
+        [
+            ["bm", "dump", "-a"],
+            ["bm", "dump", "--all"],
+            ["bm", "dump", "-l"],
+            ["bm", "dump"],
+        ],
+        timeout=30,
+    )
+    text = proc.stdout.strip()
+    path.write_text(text + "\n", encoding="utf-8")
+    print(f"[ok] packages -> {path}")
 
-    out_dir = Path(args.out_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines:
+        print("[info] first lines:")
+        for line in lines[:preview_count]:
+            print(f"  {line}")
+    return path
 
-    if args.hdc_path:
-        os.environ["HDC_PATH"] = args.hdc_path
 
-    print("[info] creating HdcHarmonyDevice")
-    device = HdcHarmonyDevice(hdc_path=args.hdc_path, target=args.target)
-    print(f"[ok] hdc path: {device.hdc_path}")
+def run_single_action(device, args, out_dir):
+    if args.action == "wakeup":
+        print("[info] wakeup")
+        device.wakeup()
+        if args.after_screenshot:
+            save_screenshot(device, out_dir, "after_wakeup.jpeg")
+        print("[done] wakeup completed")
+        return
 
+    if args.action == "unlock":
+        print("[info] wakeup")
+        device.wakeup()
+        print(f"[info] unlock by swipe up, scale={args.unlock_scale}")
+        device.swipe("up", scale=args.unlock_scale)
+        if args.after_screenshot:
+            save_screenshot(device, out_dir, "after_unlock.jpeg")
+        print("[done] unlock completed")
+        return
+
+    if args.action == "screenshot":
+        save_screenshot(device, out_dir, args.screenshot_name)
+        print("[done] screenshot completed")
+        return
+
+    if args.action == "tap":
+        print(f"[info] tap at ({args.tap_x}, {args.tap_y})")
+        device.click(args.tap_x, args.tap_y)
+        if args.after_screenshot:
+            save_screenshot(device, out_dir, "after_tap.jpeg")
+        print("[done] tap completed")
+        return
+
+    if args.action == "swipe":
+        print(f"[info] swipe {args.swipe}")
+        device.swipe(args.swipe)
+        if args.after_screenshot:
+            save_screenshot(device, out_dir, f"after_swipe_{args.swipe}.jpeg")
+        print("[done] swipe completed")
+        return
+
+    if args.action == "back":
+        print("[info] back")
+        device.keyevent("BACK")
+        if args.after_screenshot:
+            save_screenshot(device, out_dir, "after_back.jpeg")
+        print("[done] back completed")
+        return
+
+    if args.action == "home":
+        print("[info] home")
+        device.keyevent("HOME")
+        if args.after_screenshot:
+            save_screenshot(device, out_dir, "after_home.jpeg")
+        print("[done] home completed")
+        return
+
+    if args.action == "app-start":
+        if not args.package:
+            raise ValueError("--package is required when --action app-start")
+        print(f"[info] start app package: {args.package}")
+        device.app_start(args.package, ability_name=args.ability, module_name=args.module)
+        if args.after_screenshot:
+            save_screenshot(device, out_dir, "after_app_start.jpeg")
+        print("[done] app start completed")
+        return
+
+    if args.action == "packages":
+        save_packages(device, out_dir, args.packages_name, args.preview_count)
+        print("[done] package dump completed")
+        return
+
+    raise ValueError(f"Unsupported action: {args.action}")
+
+
+def run_smoke_test(device, args, out_dir):
     print("[info] wakeup")
     device.wakeup()
     save_screenshot(device, out_dir, "01_wakeup.jpeg")
@@ -80,6 +170,48 @@ def main():
     hierarchy_path.write_text(json.dumps(hierarchy, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[ok] hierarchy probe -> {hierarchy_path}")
     print("[done] hdc device smoke test completed")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Smoke test for the hdc-backed OpenHarmony device.")
+    parser.add_argument("--hdc-path", default=None, help="Path to hdc/hdc.exe. Defaults to HDC_PATH, PATH, or local SDK.")
+    parser.add_argument("--target", default=None, help="Optional hdc target id if multiple devices are connected.")
+    parser.add_argument("--out-dir", default="hdc_test_results", help="Directory for screenshots.")
+    parser.add_argument(
+        "--action",
+        choices=SINGLE_ACTIONS,
+        default="smoke",
+        help="Action to run. Use smoke for the original full test flow.",
+    )
+    parser.add_argument("--after-screenshot", action="store_true", help="Save a screenshot after single action tests.")
+    parser.add_argument("--screenshot-name", default="screenshot.jpeg", help="Output filename for --action screenshot.")
+    parser.add_argument("--packages-name", default="packages.txt", help="Output filename for --action packages.")
+    parser.add_argument("--preview-count", type=int, default=20, help="Number of package dump lines to print.")
+    parser.add_argument("--tap-x", type=int, default=100, help="X coordinate used by the tap test.")
+    parser.add_argument("--tap-y", type=int, default=100, help="Y coordinate used by the tap test.")
+    parser.add_argument("--swipe", choices=SWIPE_DIRECTIONS, default="up", help="Swipe direction to test.")
+    parser.add_argument("--unlock-scale", type=float, default=0.65, help="Swipe distance scale used by --action unlock.")
+    parser.add_argument("--input-text", default=None, help="Optional text input test. Focus a text field first.")
+    parser.add_argument("--package", default=None, help="Optional bundle name to launch, e.g. com.huawei.hmos.settings.")
+    parser.add_argument("--ability", default=None, help="Optional ability name for --action app-start.")
+    parser.add_argument("--module", default=None, help="Optional module name for --action app-start.")
+    parser.add_argument("--skip-actions", action="store_true", help="Only test connection and screenshots.")
+    args = parser.parse_args()
+
+    out_dir = Path(args.out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.hdc_path:
+        os.environ["HDC_PATH"] = args.hdc_path
+
+    print("[info] creating HdcHarmonyDevice")
+    device = HdcHarmonyDevice(hdc_path=args.hdc_path, target=args.target)
+    print(f"[ok] hdc path: {device.hdc_path}")
+
+    if args.action == "smoke":
+        run_smoke_test(device, args, out_dir)
+    else:
+        run_single_action(device, args, out_dir)
 
 
 if __name__ == "__main__":

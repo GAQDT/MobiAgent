@@ -414,8 +414,18 @@ class HdcHarmonyDevice(Device):
             "\u4fe1\u606f": "com.ohos.mms",
             "\u65e5\u5386": "com.huawei.hmos.calendar",
             "\u7535\u5b50\u90ae\u4ef6": "com.huawei.hmos.email",
+            "ohos_settings": "com.ohos.settings",
+            "ohos_photos": "com.ohos.photos",
         }
         self.app_abilities = {
+            "com.ohos.settings": [
+                "com.ohos.settings.MainAbility",
+                "MainAbility",
+            ],
+            "com.ohos.photos": [
+                "com.ohos.photos.MainAbility",
+                "MainAbility",
+            ],
             "com.huawei.hmos.settings": [
                 "com.huawei.hmos.settings.MainAbility",
                 "EntryAbility",
@@ -427,6 +437,10 @@ class HdcHarmonyDevice(Device):
                 "MainAbility",
             ],
             "com.ohos.mms": ["EntryAbility", "MainAbility"],
+        }
+        self.app_modules = {
+            "com.ohos.settings": "phone",
+            "com.ohos.photos": "phone_photos",
         }
         self._ensure_connected()
 
@@ -526,9 +540,14 @@ class HdcHarmonyDevice(Device):
         package_name = self.app_package_names.get(app, app)
         self.app_start(package_name)
 
-    def app_start(self, package_name):
-        abilities = self.app_abilities.get(package_name, ["EntryAbility", "MainAbility"])
-        commands = [["aa", "start", "-b", package_name, "-a", ability] for ability in abilities]
+    def app_start(self, package_name, ability_name=None, module_name=None):
+        module_name = module_name or self.app_modules.get(package_name)
+        abilities = [ability_name] if ability_name else self.app_abilities.get(package_name, ["EntryAbility", "MainAbility"])
+        commands = []
+        for ability in abilities:
+            if module_name:
+                commands.append(["aa", "start", "-b", package_name, "-a", ability, "-m", module_name])
+            commands.append(["aa", "start", "-b", package_name, "-a", ability])
         commands.append(["aa", "start", "-b", package_name])
         self._run_first(commands)
         time.sleep(1.5)
