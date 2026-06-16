@@ -1,0 +1,17 @@
+[
+  {
+    "app": "设置",
+    "type": "system_settings",
+    "description": "在设置中进入 WLAN 页面，查看当前网络列表，然后返回上一级页面"
+  },
+  {
+    "app": "浏览器",
+    "type": "browser_search",
+    "description": "在浏览器中搜索 OpenHarmony 官方网站，并进入搜索结果页面"
+  },
+  {
+    "app": "文件管理",
+    "type": "file_manager",
+    "description": "在文件管理中进入图片分类，查看最近项目，然后返回首页"
+  }
+]

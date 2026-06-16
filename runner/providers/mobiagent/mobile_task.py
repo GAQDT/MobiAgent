@@ -82,7 +82,9 @@ class MobiAgentStepTask(BaseTask):
         )
 
         # 配置服务URL
-        if api_base is not None and service_ip is None:
+        # When api_base is provided from runner/run.py, always prioritize it so a
+        # single OpenAI-compatible endpoint can serve decider / grounder / planner.
+        if api_base is not None:
             if api_base.startswith("http://") or api_base.startswith("https://"):
                 self.api_base = api_base
             else:

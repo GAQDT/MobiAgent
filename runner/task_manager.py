@@ -1,14 +1,15 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
 import logging
-from typing import Dict, Optional
+from importlib import import_module
+from typing import Dict
 
 
 class TaskManager:
     """
-    任务管理器，负责根据provider类型创建和执行相应的任务
+    Task manager that creates and executes tasks for different providers.
     """
-    
+
     def __init__(
         self,
         provider: str,
@@ -18,22 +19,8 @@ class TaskManager:
         device_type: str = "Android",
         max_steps: int = 40,
         draw: bool = False,
-        **kwargs
+        **kwargs,
     ):
-        """
-        初始化任务管理器
-        
-        Args:
-            provider: 模型提供者名称 ("mobiagent", "uitars", 等)
-            task_description: 任务描述
-            device: 设备对象
-            data_dir: 数据保存目录
-            device_type: 设备类型
-            max_steps: 最大步骤数
-            draw: 是否在截图上绘制操作
-            log_level: 日志级别
-            **kwargs: 传递给具体任务类的其他参数
-        """
         self.provider = provider
         self.task_description = task_description
         self.device = device
@@ -41,18 +28,15 @@ class TaskManager:
         self.device_type = device_type
         self.max_steps = max_steps
         self.kwargs = kwargs
-        
-        # 导入provider
+
         self.task_map = self._get_task_map()
-        
-        # 创建任务实例
         if provider not in self.task_map:
             raise ValueError(
                 f"Unknown provider: {provider}. "
                 f"Available providers: {list(self.task_map.keys())}"
             )
-        
-        task_class = self.task_map[provider]
+
+        task_class = self._load_task_class(provider)
         self.task = task_class(
             task_description=task_description,
             device=device,
@@ -60,81 +44,42 @@ class TaskManager:
             device_type=device_type,
             max_steps=max_steps,
             draw=draw,
-            **kwargs
+            **kwargs,
         )
-        
-        logging.info(f"TaskManager initialized with provider: {provider}")
-    
-    def _get_task_map(self) -> Dict:
-        """
-        获取provider到任务类的映射
-        
-        Returns:
-            provider名称到任务类的字典
-        """
-        try:
-            # from providers.mobiagent_task import MobiAgentTask  # Legacy, removed
-            from providers.uitars.uitars_task import UITARSTask
-            from providers.mobiagent.mobile_task import MobiAgentStepTask
-            from providers.qwen.qwen_task import QwenTask
-            from providers.autoglm.autoglm_task import AutoGLMTask
-            
-            task_map = {
-                "mobiagent": MobiAgentStepTask,  # 别名
-                "mobiagent_step": MobiAgentStepTask,
-                "uitars": UITARSTask,
-                "qwen": QwenTask,
-                "autoglm": AutoGLMTask,
-            }
-            
-            return task_map
-            
-        except ImportError as e:
-            logging.warning(f"Failed to import some providers: {e}")
-            # 返回部分可用的providers
-            task_map = {}
-            
-            try:
-                from providers.mobiagent.mobile_task import MobiAgentStepTask
-                task_map["mobiagent_step"] = MobiAgentStepTask
-            except ImportError:
-                pass
-            try:
-                from providers.uitars.uitars_task import UITARSTask
-                task_map["uitars"] = UITARSTask
-            except ImportError:
-                pass
 
-            try:
-                from providers.qwen.qwen_task import QwenTask
-                task_map["qwen"] = QwenTask
-            except ImportError:
-                pass
-            
-            return task_map
-    
+        logging.info(f"TaskManager initialized with provider: {provider}")
+
+    def _get_task_map(self) -> Dict[str, tuple[str, str]]:
+        return {
+            "mobiagent": ("providers.mobiagent.mobile_task", "MobiAgentStepTask"),
+            "mobiagent_step": ("providers.mobiagent.mobile_task", "MobiAgentStepTask"),
+            "uitars": ("providers.uitars.uitars_task", "UITARSTask"),
+            "qwen": ("providers.qwen.qwen_task", "QwenTask"),
+            "autoglm": ("providers.autoglm.autoglm_task", "AutoGLMTask"),
+        }
+
+    def _load_task_class(self, provider: str):
+        module_name, class_name = self.task_map[provider]
+        try:
+            module = import_module(module_name)
+            return getattr(module, class_name)
+        except ModuleNotFoundError as e:
+            missing_name = getattr(e, "name", "") or str(e)
+            raise ModuleNotFoundError(
+                f"Failed to load provider '{provider}' because dependency "
+                f"'{missing_name}' is missing. Please install the required "
+                f"package and try again."
+            ) from e
+
     def execute(self) -> Dict:
-        """
-        执行任务
-        
-        Returns:
-            任务执行结果字典
-        """
         logging.info(f"Executing task with provider: {self.provider}")
-        result = self.task.execute()
-        return result
-    
+        return self.task.execute()
+
     def get_task_info(self) -> Dict:
-        """
-        获取任务信息
-        
-        Returns:
-            任务信息字典
-        """
         return {
             "provider": self.provider,
             "task_description": self.task_description,
             "device_type": self.device_type,
             "max_steps": self.max_steps,
-            "data_dir": self.data_dir
+            "data_dir": self.data_dir,
         }

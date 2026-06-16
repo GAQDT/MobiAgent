@@ -399,23 +399,20 @@ class HdcHarmonyDevice(Device):
         self.screen_width = None
         self.screen_height = None
         self.app_package_names = {
-            "settings": "com.huawei.hmos.settings",
-            "browser": "com.huawei.hmos.browser",
-            "photos": "com.huawei.hmos.photos",
-            "files": "com.huawei.hmos.files",
-            "messages": "com.ohos.mms",
-            "calendar": "com.huawei.hmos.calendar",
-            "email": "com.huawei.hmos.email",
-            "PowerAgent": "com.example.osagent",
-            "\u8bbe\u7f6e": "com.huawei.hmos.settings",
-            "\u6d4f\u89c8\u5668": "com.huawei.hmos.browser",
-            "\u56fe\u5e93": "com.huawei.hmos.photos",
-            "\u6587\u4ef6\u7ba1\u7406": "com.huawei.hmos.files",
-            "\u4fe1\u606f": "com.ohos.mms",
-            "\u65e5\u5386": "com.huawei.hmos.calendar",
-            "\u7535\u5b50\u90ae\u4ef6": "com.huawei.hmos.email",
-            "ohos_settings": "com.ohos.settings",
-            "ohos_photos": "com.ohos.photos",
+            "设置": "com.ohos.settings",
+            "图库": "com.ohos.photos",
+            "相册": "com.ohos.photos",
+            "文件管理": "com.ohos.UserFile.ExternalFileManager",
+            "信息": "com.ohos.mms",
+            "相机": "com.ohos.camera",
+            "联系人": "com.ohos.contacts",
+            "备忘录": "com.ohos.note",
+            "笔记": "com.ohos.note",
+            "桌面": "com.ohos.launcher",
+            "截图": "com.ohos.screenshot",
+            "性能测试": "com.ohos.smartperf",
+            "输入法": "com.example.kikakeyboard",
+            "PowerAgent": "com.example.csdiapp",
         }
         self.app_abilities = {
             "com.ohos.settings": [
