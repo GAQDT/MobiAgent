@@ -2,11 +2,24 @@
 设备抽象层
 提供 Android 和 HarmonyOS 设备的统一接口
 """
+import os
+import json
+import shutil
+import subprocess
+import tempfile
 import time
 import base64
 from abc import ABC, abstractmethod
-import uiautomator2 as u2
-from hmdriver2.driver import Driver
+from pathlib import Path
+try:
+    import uiautomator2 as u2
+except ImportError:
+    u2 = None
+
+try:
+    from hmdriver2.driver import Driver
+except ImportError:
+    Driver = None
 
 
 class Device(ABC):
@@ -78,6 +91,8 @@ class AndroidDevice(Device):
     
     def __init__(self, adb_endpoint=None):
         super().__init__()
+        if u2 is None:
+            raise ImportError("uiautomator2 is required for AndroidDevice. Install it with `pip install uiautomator2`.")
         if adb_endpoint:
             self.d = u2.connect(adb_endpoint)
         else:
@@ -231,6 +246,8 @@ class HarmonyDevice(Device):
     
     def __init__(self):
         super().__init__()
+        if Driver is None:
+            raise ImportError("hmdriver2 is required for HarmonyDevice. Install it with `pip install hmdriver2`.")
         self.d = Driver()
         
         # 常用应用的包名映射
@@ -368,6 +385,254 @@ class HarmonyDevice(Device):
         """获取UI层级（JSON格式）"""
         return self.d.dump_hierarchy()
 
+class HdcHarmonyDevice(Device):
+    """OpenHarmony device implementation backed by hdc commands."""
+
+    REMOTE_SCREENSHOT = "/data/local/tmp/mobiagent_screen.jpeg"
+
+    def __init__(self, hdc_path=None, target=None, default_width=720, default_height=1280):
+        super().__init__()
+        self.hdc_path = hdc_path or self._find_hdc()
+        self.target = target
+        self.default_width = default_width
+        self.default_height = default_height
+        self.screen_width = None
+        self.screen_height = None
+        self.app_package_names = {
+            "settings": "com.huawei.hmos.settings",
+            "browser": "com.huawei.hmos.browser",
+            "photos": "com.huawei.hmos.photos",
+            "files": "com.huawei.hmos.files",
+            "messages": "com.ohos.mms",
+            "calendar": "com.huawei.hmos.calendar",
+            "email": "com.huawei.hmos.email",
+            "PowerAgent": "com.example.osagent",
+            "\u8bbe\u7f6e": "com.huawei.hmos.settings",
+            "\u6d4f\u89c8\u5668": "com.huawei.hmos.browser",
+            "\u56fe\u5e93": "com.huawei.hmos.photos",
+            "\u6587\u4ef6\u7ba1\u7406": "com.huawei.hmos.files",
+            "\u4fe1\u606f": "com.ohos.mms",
+            "\u65e5\u5386": "com.huawei.hmos.calendar",
+            "\u7535\u5b50\u90ae\u4ef6": "com.huawei.hmos.email",
+        }
+        self.app_abilities = {
+            "com.huawei.hmos.settings": [
+                "com.huawei.hmos.settings.MainAbility",
+                "EntryAbility",
+                "MainAbility",
+            ],
+            "com.huawei.hmos.browser": [
+                "com.huawei.hmos.browser.MainAbility",
+                "EntryAbility",
+                "MainAbility",
+            ],
+            "com.ohos.mms": ["EntryAbility", "MainAbility"],
+        }
+        self._ensure_connected()
+
+    def _find_hdc(self):
+        env_path = os.environ.get("HDC_PATH")
+        if env_path:
+            return env_path
+
+        found = shutil.which("hdc")
+        if found:
+            return found
+
+        sdk_hdc = (
+            Path(__file__).resolve().parents[2]
+            / "ohos-sdk-full"
+            / "windows"
+            / "toolchains"
+            / "hdc.exe"
+        )
+        if sdk_hdc.exists():
+            return str(sdk_hdc)
+
+        return "hdc"
+
+    def _base_cmd(self):
+        cmd = [self.hdc_path]
+        if self.target:
+            cmd.extend(["-t", self.target])
+        return cmd
+
+    def _run(self, *args, check=True, timeout=30):
+        proc = subprocess.run(
+            [*self._base_cmd(), *map(str, args)],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+        if check and proc.returncode != 0:
+            raise RuntimeError(
+                f"hdc command failed: {' '.join(map(str, args))}\n"
+                f"stdout: {proc.stdout.strip()}\n"
+                f"stderr: {proc.stderr.strip()}"
+            )
+        return proc
+
+    def _shell(self, *args, check=True, timeout=30):
+        return self._run("shell", *args, check=check, timeout=timeout)
+
+    def _run_first(self, commands, timeout=30):
+        errors = []
+        for command in commands:
+            proc = self._shell(*command, check=False, timeout=timeout)
+            if proc.returncode == 0:
+                return proc
+            errors.append(f"{' '.join(map(str, command))}: {proc.stderr.strip() or proc.stdout.strip()}")
+        raise RuntimeError("All hdc command variants failed:\n" + "\n".join(errors))
+
+    def _ensure_connected(self):
+        proc = self._run("list", "targets", check=True)
+        targets = [line.strip() for line in proc.stdout.splitlines() if line.strip() and line.strip() != "[Empty]"]
+        if not targets:
+            raise RuntimeError("No OpenHarmony device found by `hdc list targets`.")
+        if self.target is None and len(targets) > 1:
+            raise RuntimeError(
+                "Multiple hdc targets found. Pass --device-id or create HdcHarmonyDevice(target=...)."
+            )
+
+    def _update_screen_size_from_image(self, path):
+        try:
+            from PIL import Image
+
+            with Image.open(path) as img:
+                self.screen_width, self.screen_height = img.size
+        except Exception:
+            self.screen_width = self.screen_width or self.default_width
+            self.screen_height = self.screen_height or self.default_height
+
+    def _screen_size(self):
+        if self.screen_width and self.screen_height:
+            return self.screen_width, self.screen_height
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "screen.jpeg")
+            self.screenshot(path)
+        return self.screen_width or self.default_width, self.screen_height or self.default_height
+
+    def wakeup(self):
+        self._run_first(
+            [
+                ["power-shell", "wakeup"],
+                ["uinput", "-K", "-d", "18", "-u", "18"],
+            ]
+        )
+        time.sleep(0.5)
+
+    def start_app(self, app):
+        package_name = self.app_package_names.get(app, app)
+        self.app_start(package_name)
+
+    def app_start(self, package_name):
+        abilities = self.app_abilities.get(package_name, ["EntryAbility", "MainAbility"])
+        commands = [["aa", "start", "-b", package_name, "-a", ability] for ability in abilities]
+        commands.append(["aa", "start", "-b", package_name])
+        self._run_first(commands)
+        time.sleep(1.5)
+
+    def app_stop(self, package_name):
+        self._run_first(
+            [
+                ["aa", "force-stop", package_name],
+                ["aa", "stop", "-b", package_name],
+            ]
+        )
+        time.sleep(0.5)
+
+    def screenshot(self, path):
+        path = os.fspath(path)
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        self._shell("snapshot_display", "-f", self.REMOTE_SCREENSHOT)
+        self._run("file", "recv", self.REMOTE_SCREENSHOT, path)
+        self._update_screen_size_from_image(path)
+        time.sleep(0.2)
+
+    def click(self, x, y):
+        self._shell("uinput", "-T", "-c", int(x), int(y))
+        time.sleep(0.5)
+
+    def long_click(self, x, y):
+        self._run_first(
+            [
+                ["uitest", "uiInput", "longClick", int(x), int(y)],
+                ["uinput", "-T", "-d", int(x), int(y), "-i", "800", "-u", int(x), int(y)],
+            ]
+        )
+        time.sleep(0.5)
+
+    def double_click(self, x, y):
+        self.click(x, y)
+        time.sleep(0.1)
+        self.click(x, y)
+
+    def input(self, text):
+        self._run_first(
+            [
+                ["uitest", "uiInput", "text", text],
+                ["input", "text", text],
+            ]
+        )
+        time.sleep(0.5)
+
+    def swipe(self, direction, scale=0.5):
+        width, height = self._screen_size()
+        direction = direction.lower()
+        x_mid = int(width * 0.5)
+        y_mid = int(height * 0.5)
+        x_left = int(width * (0.5 - scale / 2))
+        x_right = int(width * (0.5 + scale / 2))
+        y_top = int(height * (0.5 - scale / 2))
+        y_bottom = int(height * (0.5 + scale / 2))
+
+        if direction == "up":
+            self.swipe_with_coords(x_mid, y_bottom, x_mid, y_top)
+        elif direction == "down":
+            self.swipe_with_coords(x_mid, y_top, x_mid, y_bottom)
+        elif direction == "left":
+            self.swipe_with_coords(x_right, y_mid, x_left, y_mid)
+        elif direction == "right":
+            self.swipe_with_coords(x_left, y_mid, x_right, y_mid)
+        else:
+            raise ValueError(f"Unsupported swipe direction: {direction}")
+
+    def swipe_with_coords(self, start_x, start_y, end_x, end_y):
+        self._shell("uinput", "-T", "-m", int(start_x), int(start_y), int(end_x), int(end_y))
+        time.sleep(0.5)
+
+    def keyevent(self, key):
+        key_name = str(key).upper()
+        key_codes = {
+            "HOME": "1",
+            "BACK": "2",
+            "POWER": "18",
+            "ENTER": "2017",
+            "RECENTS": "16",
+        }
+        commands = []
+        if key_name in {"BACK", "HOME", "ENTER", "POWER"}:
+            commands.append(["uitest", "uiInput", "keyEvent", key_name.title()])
+        code = key_codes.get(key_name, str(key))
+        commands.append(["uinput", "-K", "-d", code, "-u", code])
+        self._run_first(commands)
+        time.sleep(0.5)
+
+    def dump_hierarchy(self):
+        proc = self._shell("uitest", "dumpLayout", check=False, timeout=10)
+        if proc.returncode != 0:
+            return {}
+
+        text = proc.stdout.strip()
+        if not text:
+            return {}
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {"raw": text}
+
 
 def create_device(device_type, adb_endpoint=None):
     """
@@ -383,6 +648,10 @@ def create_device(device_type, adb_endpoint=None):
     if device_type.lower() == "android":
         return AndroidDevice(adb_endpoint)
     elif device_type.lower() == "harmony":
+        return HdcHarmonyDevice(target=adb_endpoint)
+    elif device_type.lower() == "hdc":
+        return HdcHarmonyDevice(target=adb_endpoint)
+    elif device_type.lower() in ["hmdriver", "harmony_driver"]:
         return HarmonyDevice()
     else:
         raise ValueError(f"Unsupported device type: {device_type}")
