@@ -11,6 +11,8 @@ weights/
 
 utils/experience/BAAI/
 .venv/
+agent_server/logs/
+agent_server/results/
 utils/experience/BAAI/
 utils/experience/all-MiniLM-L6-v2/
 data-*
