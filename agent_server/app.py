@@ -154,9 +154,7 @@ class Controller:
         })
 
         try:
-            decision = self.deterministic_action(task)
-            if decision is None:
-                decision = await asyncio.to_thread(self.bridge.decide, task.task, task.history, image_base64)
+            decision = await asyncio.to_thread(self.bridge.decide, task.task, task.history, image_base64)
 
             raw = decision.get("raw", {})
             task.history.append(json.dumps(raw, ensure_ascii=False))
@@ -254,72 +252,12 @@ class Controller:
         screenshot_path.write_bytes(base64.b64decode(image_base64))
         return screenshot_path
 
-    def deterministic_action(self, task: TaskState) -> Optional[Dict[str, Any]]:
-        task_text = task.task.lower()
-        is_settings_task = any(
-            keyword in task_text
-            for keyword in ("wlan", "settings", "storage", "设置", "存储", "网络", "连接")
-        )
-        is_wlan_task = "wlan" in task_text
-
-        if task.step == 1 and is_settings_task:
-            return {
-                "action": {
-                    "id": f"init-settings-{task.step}",
-                    "action": "app_start",
-                    "bundleName": "com.ohos.settings",
-                    "abilityName": "com.ohos.settings.MainAbility",
-                    "moduleName": "phone",
-                },
-                "reasoning": "Initial task requests Settings-related information; launch Settings before visual navigation.",
-                "raw": {
-                    "reasoning": "Launch Settings as deterministic bootstrap action.",
-                    "action": "app_start",
-                    "parameters": {"bundleName": "com.ohos.settings"},
-                },
-            }
-        if task.step == 2 and is_wlan_task:
-            return {
-                "action": {
-                    "id": f"wlan-open-row-{task.step}",
-                    "action": "click",
-                    "x": 150,
-                    "y": 165,
-                },
-                "reasoning": "Open the WLAN row from the top area of the Settings home page.",
-                "raw": {
-                    "reasoning": "Click WLAN row.",
-                    "action": "click",
-                    "parameters": {"x": 150, "y": 165},
-                },
-            }
-        if task.step >= 3 and is_wlan_task and self.has_ok_result(task, "wlan-open-row"):
-            return {
-                "action": {
-                    "id": f"wlan-done-{task.step}",
-                    "action": "done",
-                    "status": "success",
-                },
-                "reasoning": "WLAN page is open after deterministic WLAN row click; connected status is visible in the latest observation.",
-                "raw": {
-                    "reasoning": "WLAN page reached.",
-                    "action": "done",
-                    "parameters": {"status": "success"},
-                },
-            }
-        return None
-
     def normalize_action(self, action: Dict[str, Any], task: TaskState, observation: Dict[str, Any]) -> Dict[str, Any]:
         allowed = {"wait", "done", "click", "swipe", "back", "home", "input", "app_start"}
         if action.get("action") not in allowed:
             task.add_trace("action_normalized", {"original": action, "reason": "unsupported action"})
             return {"id": f"wait-unsupported-{task.step}", "action": "wait", "duration": 1000}
 
-        width = int(observation.get("width") or 0)
-        height = int(observation.get("height") or 0)
-        if action.get("action") == "click" and width > 0 and height > 0:
-            action["x"] = max(0, min(width - 1, int(action.get("x", 0))))
-            action["y"] = max(0, min(height - 1, int(action.get("y", 0))))
         return action
 
     def accept_done(self, task: TaskState) -> bool:
